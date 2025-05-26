@@ -9,20 +9,56 @@ app = Flask(__name__)
 @app.route('/')
 def wake():
     token = os.getenv("RAILWAY_TOKEN")
-    project_id = os.getenv("RAILWAY_PROJECT_ID")
-    service_name = os.getenv("RAILWAY_SERVICE_NAME")
+    account_token = os.getenv("RAILWAY_PERSONAL_TOKEN")
+    service_id = os.getenv("RAILWAY_SERVICE_ID")
+    environment_id = os.getenv("RAILWAY_ENVIRONMENT_ID")
 
-    url = f"https://backboard.railway.app/project/{project_id}/service/{service_name}/deploy"
+    if not token or not service_id or not environment_id:
+        return jsonify({
+            "error": "Missing required environment variables. Please set RAILWAY_TOKEN, RAILWAY_SERVICE_ID, and RAILWAY_ENVIRONMENT_ID."
+        }), 400
+
+    url = "https://backboard.railway.app/graphql/v2"
     headers = {
-        "Authorization": f"Bearer {token}",
+        # "Authorization": f"Project-Access-Token: {token}",
+        "Authorization": f"Bearer {account_token}",
         "Content-Type": "application/json"
     }
 
-    res = requests.post(url, headers=headers)
-    if res.status_code == 200:
-        return jsonify({"message": "🚀 Bot is waking up!"})
-    else:
-        return jsonify({"error": "❌ Failed to trigger deploy", "status": res.status_code}), 500
+    query = """
+    mutation serviceInstanceRedeploy($environmentId: String!, $serviceId: String!) {
+        serviceInstanceRedeploy(environmentId: $environmentId, serviceId: $serviceId)
+    }
+    """
+
+    variables = {
+	    "serviceId": service_id,
+        "environmentId": environment_id,
+    }
+    try:
+        response = requests.post(url, headers=headers, json={"query": query, "variables": variables}, timeout=10)
+        response.raise_for_status()
+        data = response.json()
+    except Exception as e:
+        return jsonify({
+            "error": "Request to Railway API failed.",
+            "details": str(e)
+        }), 502
+
+    if "errors" in data:
+        return jsonify({
+            "error": "Railway API returned errors.",
+            "details": data["errors"]
+        }), 502
+    if not data.get("data", {}).get("serviceInstanceRedeploy"):
+        return jsonify({
+            "error": "Service redeployment failed or returned no result.",
+            "details": data
+        }), 500
+    return jsonify({
+        "message": "Service redeployment initiated successfully.",
+        "data": data
+    }), 200
 
 if __name__ == '__main__':
     app.run()
